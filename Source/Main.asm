@@ -9,7 +9,12 @@ Start:
     ; Setup screen
     call VGA_Init
 
-    
+    mov al, 0x20
+    mov cx, 0x10
+    mov dx, 0x10
+    ;call VGA_Place_Pixel
+    ;call VGA_Transfer
+    ;jmp $
 
     .Main_Loop:
         mov ah, 0x00
@@ -59,6 +64,7 @@ Start:
         mov cx, 20
         mov dx, 20
         call Draw_Cube
+        call VGA_Transfer
         jmp .Main_Loop
 
     .Escape:

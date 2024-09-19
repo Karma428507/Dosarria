@@ -10,7 +10,56 @@ VGA_Init:
     int 0x10
     ret
 
+VGA_Transfer:
+    push es
+    push ds
+
+    ; Copy main buffer
+    mov ax, 0xB000
+    mov ds, ax
+    mov ax, 0xA000
+    mov es, ax
+
+    xor si, si
+    xor di, di
+    mov ecx, 320*200
+    rep movsb
+    ; Clear second buffer
+    mov ax, 0xB000
+    mov es, ax
+
+    xor di, di
+    xor eax, eax
+    mov ecx, (320*200)/4
+    rep stosd
+
+    pop ds
+    pop es
+    ret
+
 VGA_Sync:
+
+; cx = x
+; dx = y
+; al = color
+VGA_Place_Pixel:
+    pusha
+    push ax
+    mov si, cx
+
+    mov ax, 320
+    mul dx
+    add si, ax
+
+    push ds
+    mov ax, 0xB000
+    mov ds, ax
+
+    pop ax
+    mov [si], al
+    pop ds
+    popa
+    ret
 
 ; ax = x
 ; bx = y
@@ -22,7 +71,6 @@ Draw_Cube:
     mov [.W], cx
     mov [.H], dx
 
-    mov ah, 0x0C
     mov al, 0x20
 
     mov bx, [.W]
@@ -35,10 +83,7 @@ Draw_Cube:
         mov bx, [.H]
 
         .Loop_Col:
-            push bx
-            xor bx, bx
-            int 0x10
-            pop bx
+            call VGA_Place_Pixel
             
             test bx, bx
             jz .Col_End
