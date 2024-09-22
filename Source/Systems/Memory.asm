@@ -17,7 +17,7 @@ Init_Memory:
 
     ; See how many segments can be allocated (must be at least 3)
     sub ax, bx
-    cmp ax, 0x02
+    cmp ax, 0x03
     jl .Low_Memory_Error
 
     ; Set the map
@@ -25,6 +25,8 @@ Init_Memory:
     mov [Memory_Map.Main_Program], ax
     add ax, 0x1000
     mov [Memory_Map.Alloc_Memory], ax
+    add ax, 0x1000
+    mov [Memory_Map.File_Storage], ax
     add ax, 0x1000
     mov [Memory_Map.BMP_Storage], ax
     ret
@@ -51,4 +53,5 @@ Init_Memory:
 Memory_Map:
     .Main_Program   dw 0x0000 ; For the current program
     .Alloc_Memory   dw 0x0000 ; For save file, chunks, layers and ect
-    .BMP_Storage    db 0x0000 ; For current BMPs
+    .File_Storage   dw 0x0000 ; A buffer for files
+    .BMP_Storage    dw 0x0000 ; For current BMPs

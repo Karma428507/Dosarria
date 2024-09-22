@@ -8,6 +8,7 @@ jmp Start
 %include "Source/Engine/Layers.asm"
 %include "Source/Engine/Objects.asm"
 
+%include "Source/Systems/Files.asm"
 %include "Source/Systems/Memory.asm"
 %include "Source/Systems/Threading.asm"
 %include "Source/Systems/VGA.asm"
@@ -22,11 +23,15 @@ Start:
 
     call Init_Memory
 
+    mov ax, DEBUG
+    call Load_BMP
+    
+
     ; Setup basic threads
     mov ax, Thread_Action_Input
     ;call Thread_Add
 
-    ; Add keys
+    jmp $
     ret
 
     .Loop:
