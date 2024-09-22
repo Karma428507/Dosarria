@@ -20,11 +20,14 @@ Start:
     ;call VGA_Transfer
     ;jmp $
 
+    call Init_Memory
+
     ; Setup basic threads
     mov ax, Thread_Action_Input
-    call Thread_Add
+    ;call Thread_Add
 
     ; Add keys
+    ret
 
     .Loop:
         call Thread_Run
@@ -95,17 +98,5 @@ Start:
 Exit:
     mov ah, 0x00
     mov al, 0x03
-    int 0x10
-    ret
-
-Thread_A:
-    mov ah, 0x0E
-    mov al, 'a'
-    int 0x10
-    ret
-
-Thread_B:
-    mov ah, 0x0E
-    mov al, 'b'
     int 0x10
     ret
