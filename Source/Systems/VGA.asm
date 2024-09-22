@@ -1,8 +1,5 @@
 VGA_Init:
     ; Allocate memory WIP
-    mov ah, 0x48
-    mov bx, 0x1000
-    int 0x21
 
     ; 320*200 screen with 256 colors
     mov ah, 0x00

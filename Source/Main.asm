@@ -3,18 +3,34 @@
 
 jmp Start
 
-%include "Source/VGA.asm"
+%include "Source/Engine/BMP.asm"
+%include "Source/Engine/Input.asm"
+%include "Source/Engine/Layers.asm"
+%include "Source/Engine/Objects.asm"
+
+%include "Source/Systems/Memory.asm"
+%include "Source/Systems/Threading.asm"
+%include "Source/Systems/VGA.asm"
 
 Start:
     ; Setup screen
-    call VGA_Init
+    ;call VGA_Init
 
-    mov al, 0x20
-    mov cx, 0x10
-    mov dx, 0x10
     ;call VGA_Place_Pixel
     ;call VGA_Transfer
     ;jmp $
+
+    ; Setup basic threads
+    mov ax, Thread_Action_Input
+    call Thread_Add
+
+    ; Add keys
+
+    .Loop:
+        call Thread_Run
+        jmp .Loop
+
+    jmp Exit
 
     .Main_Loop:
         mov ah, 0x00
@@ -76,4 +92,20 @@ Start:
     .Coord_X dw 0x0A
     .Coord_Y dw 0x0A
     
-Msg: db "Hai :3", 0x0A, 0x0D, 0x00
+Exit:
+    mov ah, 0x00
+    mov al, 0x03
+    int 0x10
+    ret
+
+Thread_A:
+    mov ah, 0x0E
+    mov al, 'a'
+    int 0x10
+    ret
+
+Thread_B:
+    mov ah, 0x0E
+    mov al, 'b'
+    int 0x10
+    ret
