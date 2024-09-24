@@ -28,7 +28,7 @@ Init_Memory:
     add ax, 0x1000
     mov [Memory_Map.File_Storage], ax
     add ax, 0x1000
-    mov [Memory_Map.BMP_Storage], ax
+    mov [Memory_Map.Image_Buffer], ax
     ret
 
     .Int_x12_Fail:
@@ -54,4 +54,4 @@ Memory_Map:
     .Main_Program   dw 0x0000 ; For the current program
     .Alloc_Memory   dw 0x0000 ; For save file, chunks, layers and ect
     .File_Storage   dw 0x0000 ; A buffer for files
-    .BMP_Storage    dw 0x0000 ; For current BMPs
+    .Image_Buffer   dw 0x0000 ; For current BMPs

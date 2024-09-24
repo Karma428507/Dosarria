@@ -4,34 +4,48 @@
 jmp Start
 
 %include "Source/Engine/BMP.asm"
+%include "Source/Engine/Image_Storage.asm"
 %include "Source/Engine/Input.asm"
 %include "Source/Engine/Layers.asm"
 %include "Source/Engine/Objects.asm"
 
 %include "Source/Systems/Files.asm"
 %include "Source/Systems/Memory.asm"
+%include "Source/Systems/Sound.asm"
 %include "Source/Systems/Threading.asm"
 %include "Source/Systems/VGA.asm"
 
 Start:
     ; Setup screen
-    ;call VGA_Init
-
-    ;call VGA_Place_Pixel
-    ;call VGA_Transfer
-    ;jmp $
+    call VGA_Init
 
     call Init_Memory
 
     mov ax, DEBUG
-    call Load_BMP
+    mov bl, 0x20
+    call Buffer_Draw_Cube
     
+    mov ax, DEBUG
+    mov cx, 10
+    mov dx, 10
+    call Buffer_Display_Image
+    call VGA_Transfer
+    jmp $
+    ;ret
+
+    .Draw:
+        mov ax, DEBUG
+        mov cx, 10
+        mov dx, 10
+        call Buffer_Display_Image
+        ;call VGA_Transfer
+        jmp .Draw
 
     ; Setup basic threads
     mov ax, Thread_Action_Input
     ;call Thread_Add
 
-    jmp $
+    ;jmp $
     ret
 
     .Loop:
