@@ -1,10 +1,11 @@
 VGA_Init:
-    ; Allocate memory WIP
-
     ; 320*200 screen with 256 colors
     mov ah, 0x00
     mov al, 0x13
     int 0x10
+    
+    ; Clear 0xB000 (the drawing buffer)
+    call VGA_Clear_Buffer
     ret
 
 VGA_Transfer:
@@ -21,7 +22,15 @@ VGA_Transfer:
     xor di, di
     mov ecx, 320*200
     rep movsb
+    pop ds
+    pop es
+
     ; Clear second buffer
+    call VGA_Clear_Buffer
+    ret
+
+VGA_Clear_Buffer:
+    push es
     mov ax, 0xB000
     mov es, ax
 
@@ -30,7 +39,6 @@ VGA_Transfer:
     mov ecx, (320*200)/4
     rep stosd
 
-    pop ds
     pop es
     ret
 

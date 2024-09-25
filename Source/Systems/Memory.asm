@@ -50,6 +50,14 @@ Init_Memory:
     .Int_x12_Fail_Msg db "Error, failed to use int 12, exiting...$"
     .Low_Memory_Error_Msg db "Error, not enough memory to allocate, exiting...$"
 
+Restore_Segments:
+    push ax
+    mov ax, [Memory_Map.Main_Program]
+    mov ds, ax
+    mov es, ax
+    pop ax
+    ret
+
 Memory_Map:
     .Main_Program   dw 0x0000 ; For the current program
     .Alloc_Memory   dw 0x0000 ; For save file, chunks, layers and ect

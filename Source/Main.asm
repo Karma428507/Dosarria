@@ -22,23 +22,29 @@ Start:
     call Init_Memory
 
     mov ax, DEBUG
-    mov bl, 0x20
+    mov bl, 0x24
     call Buffer_Draw_Cube
-    
+
     mov ax, DEBUG
     mov cx, 10
     mov dx, 10
     call Buffer_Display_Image
+
+    mov al, 0x3
+    xor cx, cx
+    xor dx, dx
+    inc dx
+    ;call VGA_Place_Pixel
+
     call VGA_Transfer
     jmp $
-    ;ret
 
     .Draw:
         mov ax, DEBUG
         mov cx, 10
         mov dx, 10
         call Buffer_Display_Image
-        ;call VGA_Transfer
+        call VGA_Transfer
         jmp .Draw
 
     ; Setup basic threads
