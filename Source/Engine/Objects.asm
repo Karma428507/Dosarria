@@ -1,3 +1,8 @@
+; ah = Width
+; al = Height
+; bl = Color
+; cx = X
+; dx = Y
 Add_Object:
     ret
 
@@ -7,10 +12,9 @@ Object_List:
 
 ; 16 bytes
 OBJECT_INFO:
-    .FLAGS      equ 0x00
-    .BMP_SEG    equ 0x02
-    .BMP_OFF    equ 0x04
-    .ENV_POS    equ 0x06
-    .WIDTH      equ 0x0A
-    .HIGHT      equ 0x0B
-    .RESERVED   equ 0x0C
+    .W db 0x00
+    .H db 0x00
+    .X dw 0x0000
+    .Y dw 0x0000
+    .Color db 0x00
+    .Reserved db 0x00

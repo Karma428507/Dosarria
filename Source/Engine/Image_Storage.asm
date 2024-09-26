@@ -219,9 +219,9 @@ Buffer_Display_Image:
         mov ax, bx
         mov dx, 0x100
         mul dx
-        mov bx, ax
+        mov si, ax
         xor cx, cx
-        add bx, cx
+        add si, cx
 
         call Restore_Segments
         mov word [.X_Current], 20
@@ -231,17 +231,17 @@ Buffer_Display_Image:
         inc cx
 
         pusha
-        push ds
+        push es
         mov ax, [Memory_Map.Image_Buffer]
-        mov ds, ax
-        mov al, 0x40;[bx]
-        pop ds
+        mov es, ax
+        mov al, [si]
+        pop es
         ;mov cx, bx
         ;xor dx, dx
         add cx, [.X_Current]
         ;mov dx, [.Y_Current]
         ;add cx, [.Width];10
-        mov dx, 10
+        mov dx, [.Y_Current];10
         call VGA_Place_Pixel
         popa
 

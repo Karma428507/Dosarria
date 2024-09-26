@@ -66,44 +66,46 @@ VGA_Place_Pixel:
     popa
     ret
 
-; ax = x
-; bx = y
-; cx = w
-; dx = h
+; ah = W
+; al = H
+; bl = Color
+; cx = X
+; dx = Y
 Draw_Cube:
-    mov [.X], ax
-    mov [.Y], bx
-    mov [.W], cx
-    mov [.H], dx
+    mov [.W], ah
+    mov [.H], al
+    mov [.X], cx
+    mov [.Y], dx
 
-    mov al, 0x20
+    mov al, bl
+    xor bx, bx
 
-    mov bx, [.W]
+    mov bl, [.W]
     mov dx, [.Y]
 
     .Loop_Row:
         mov cx, [.X]
 
         push bx
-        mov bx, [.H]
+        mov bl, [.H]
 
         .Loop_Col:
             call VGA_Place_Pixel
             
-            test bx, bx
+            test bl, bl
             jz .Col_End
 
-            dec bx
+            dec bl
             inc cx
             jmp .Loop_Col
         
         .Col_End:
             pop bx
 
-            test bx, bx
+            test bl, bl
             jz .Row_End
 
-            dec bx
+            dec bl
             inc dx
             jmp .Loop_Row
 
@@ -112,5 +114,5 @@ Draw_Cube:
 
     .X dw 0x00
     .Y dw 0x00
-    .W dw 0x00
-    .H dw 0x00
+    .W db 0x00
+    .H db 0x00

@@ -37,13 +37,15 @@ Start:
     ;call VGA_Place_Pixel
 
     call VGA_Transfer
-    jmp $
+    ;jmp $
 
     .Draw:
-        mov ax, DEBUG
+        mov ah, 10
+        mov al, 10
+        mov bl, 0x28
         mov cx, 10
         mov dx, 10
-        call Buffer_Display_Image
+        call Draw_Cube
         call VGA_Transfer
         jmp .Draw
 
