@@ -1,3 +1,8 @@
+%define VGA_BACKGROUND 0x03030303
+
+; Remember the colors
+; RRRGGGBB
+
 VGA_Init:
     ; 320*200 screen with 256 colors
     mov ah, 0x00
@@ -35,7 +40,7 @@ VGA_Clear_Buffer:
     mov es, ax
 
     xor di, di
-    xor eax, eax
+    mov eax, VGA_BACKGROUND
     mov ecx, (320*200)/4
     rep stosd
 
@@ -65,54 +70,3 @@ VGA_Place_Pixel:
     pop ds
     popa
     ret
-
-; ah = W
-; al = H
-; bl = Color
-; cx = X
-; dx = Y
-Draw_Cube:
-    mov [.W], ah
-    mov [.H], al
-    mov [.X], cx
-    mov [.Y], dx
-
-    mov al, bl
-    xor bx, bx
-
-    mov bl, [.W]
-    mov dx, [.Y]
-
-    .Loop_Row:
-        mov cx, [.X]
-
-        push bx
-        mov bl, [.H]
-
-        .Loop_Col:
-            call VGA_Place_Pixel
-            
-            test bl, bl
-            jz .Col_End
-
-            dec bl
-            inc cx
-            jmp .Loop_Col
-        
-        .Col_End:
-            pop bx
-
-            test bl, bl
-            jz .Row_End
-
-            dec bl
-            inc dx
-            jmp .Loop_Row
-
-    .Row_End:
-        ret
-
-    .X dw 0x00
-    .Y dw 0x00
-    .W db 0x00
-    .H db 0x00

@@ -13,39 +13,31 @@ jmp Start
 %include "Source/Systems/Memory.asm"
 %include "Source/Systems/Sound.asm"
 %include "Source/Systems/Threading.asm"
+%include "Source/Systems/Timer.asm"
 %include "Source/Systems/VGA.asm"
 
 Start:
     ; Setup screen
     call VGA_Init
 
-    call Init_Memory
+    ;call Init_Memory
 
-    mov ax, DEBUG
-    mov bl, 0x24
-    call Buffer_Draw_Cube
+    mov ah, 0x0A
+    mov al, 0x0A
+    mov bl, 0x09
+    mov bh, 0x00
+    mov cx, 0x20
+    mov dx, 0x20
+    call Add_Object
 
-    mov ax, DEBUG
-    mov cx, 10
-    mov dx, 10
-    call Buffer_Display_Image
-
-    mov al, 0x3
-    xor cx, cx
-    xor dx, dx
-    inc dx
-    ;call VGA_Place_Pixel
-
+    mov ax, 0x00
+    call Draw_Object
     call VGA_Transfer
-    ;jmp $
+    jmp $
 
     .Draw:
-        mov ah, 10
-        mov al, 10
-        mov bl, 0x28
-        mov cx, 10
-        mov dx, 10
-        call Draw_Cube
+        mov ax, 0x00
+        call Draw_Object
         call VGA_Transfer
         jmp .Draw
 
