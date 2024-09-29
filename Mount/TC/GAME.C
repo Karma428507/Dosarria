@@ -1,0 +1,80 @@
+#include <DOS.H>
+
+#define VIDEO 	0xA0000000
+#define TEMP  	0xB0000000
+#define SCREEN	0xFA00 / 0x02
+
+typedef unsigned char 	uint_8;
+typedef unsigned short 	uint_16;
+
+/* VGA */
+void VGA_INIT();
+void VGA_SWAP();
+void VGA_PLACE(uint_8, uint_16, uint_16);
+
+void DRAW_CUBE(uint_8, uint_8, uint_8, uint_16, uint_16);
+
+/* KEYBOARD */
+uint_8 INPUT_GET_KEY();
+
+int main() {
+	VGA_INIT();
+
+	while (INPUT_GET_KEY() != 0x2B) {
+		DRAW_CUBE(0x20, 10, 10, 20, 20);
+		VGA_SWAP();
+	}
+	return 0;
+}
+
+void VGA_INIT() {
+	union REGS inp, out;
+
+	inp.h.ah = 0x00;
+	inp.h.al = 0x13;
+	int86(0x10, &inp, &out);
+}
+
+void VGA_SWAP() {
+	int far *Video_Buffer = (int far *)VIDEO;
+	int far *Temp_Buffer = (int far *)TEMP;
+	int i = 0;
+
+	for (; i < SCREEN; i++)
+		Video_Buffer[i] = Temp_Buffer[i];
+
+	for (i = 0; i < SCREEN; i++)
+		Temp_Buffer[i] = 0x03030303;
+}
+
+void VGA_PLACE(uint_8 color, uint_16 x, uint_16 y) {
+	uint_8 far *Temp_Buffer = (uint_8 far *)TEMP;
+
+	Temp_Buffer[(y * 320) + x] = color;
+}
+
+void DRAW_CUBE(uint_8 color, uint_8 w, uint_8 h, uint_16 x, uint_16 y) {
+	int i = 0, j = 0;
+
+	for (; i < w; i++) {
+		for (j = 0; j < h; j++) {
+			VGA_PLACE(color, x + i, y + j);
+		}
+	}
+}
+
+uint_8 INPUT_GET_KEY() {
+	uint_8 ASCII[] = {
+		0, 0x2B, '1', '2', '3', '4', '5', '6', '7', '8',
+		'9'
+	};
+
+	uint_8 key, index;
+
+	key = inp(0x64);
+	if (key & 1 == 0)
+		return 0;
+
+	index = inp(0x60);
+	return ASCII[index];
+}

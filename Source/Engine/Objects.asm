@@ -82,7 +82,7 @@ Draw_Cube:
     mov al, bl
     xor bx, bx
 
-    mov bl, [.W]
+    mov bl, [.H]
     mov dx, [.Y]
 
     .Loop_Row:
@@ -90,7 +90,7 @@ Draw_Cube:
 
         push bx
         xor bx, bx
-        mov bl, [.H]
+        mov bl, [.W]
 
         .Loop_Col:
             call VGA_Place_Pixel
@@ -115,8 +115,8 @@ Draw_Cube:
     .Row_End:
         ret
 
-    .X dw 0x00
-    .Y dw 0x00
+    .X dw 0x0000
+    .Y dw 0x0000
     .W db 0x00
     .H db 0x00
 
