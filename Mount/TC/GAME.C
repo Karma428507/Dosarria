@@ -1,29 +1,116 @@
 #include <DOS.H>
 
+/* CONSTANTS */
 #define VIDEO 	0xA0000000
 #define TEMP  	0xB0000000
 #define SCREEN	0xFA00 / 0x02
 
+#define FLAG_2D_GRID 		1<<0
+#define FLAG_COLLIDE_BASE	1<<1
+#define FLAG_COLLIDE_REACT	1<<2
+#define FLAG_UI				1<<3
+
+#define BLOCK_TYPE_NULL		0x00
+#define BLOCK_TYPE_DIRT		0x01
+#define BLOCK_TYPE_GRASS	0x02
+
+#define OBJECT_ID_NULL		0x00
+#define OBJECT_ID_PLAYER	0x01
+
+#define OBJECT_FLAG_PRESENT	1<<0
+
+#define COLOR_PICKER(R, G, B) ((R & 7) << 5) | ((G & 7) << 2) | (B & 3)
+
+/* TYPES */
 typedef unsigned char 	uint_8;
 typedef unsigned short 	uint_16;
 
+/* STRUCTURES */
+typedef struct {
+	uint_16 ADDRESS;
+	uint_16 SIZE;
+	uint_8 FLAGS;
+} LAYER_PROPERTIES;
+
+typedef struct {
+	uint_8 ID;
+	uint_8 FLAGS;
+	uint_8 COLOR;
+	uint_8 W;
+	uint_8 H;
+	uint_16 X;
+	uint_16 Y;
+} OBJECT_PROPERTY;
+
+typedef struct {
+	uint_8 ID;
+	char X_OFFSET;
+	char Y_OFFSET;
+} OBJECT_UPDATE;
+
 /* VGA */
 void VGA_INIT();
+void VGA_EXIT();
 void VGA_SWAP();
 void VGA_PLACE(uint_8, uint_16, uint_16);
 
+/* DRAWING */
 void DRAW_CUBE(uint_8, uint_8, uint_8, uint_16, uint_16);
+void DRAW_OBJECT(OBJECT_PROPERTY);
+void DRAW_GRID(char *);
 
-/* KEYBOARD */
+/* LAYERS/OBJECTS */
+void INIT_LAYERS();
+void LAYER_UPDATE();
+void CREATE_OBJECT(OBJECT_PROPERTY, uint_8, uint_16);
+
+/* INPUT */
 uint_8 INPUT_GET_KEY();
 
+/* SOUND (if there's time) */
+
+/* THREADS/TIMER */
+
+/* FILE MANAGEMENT */
+
+/* WORLD GEN */
+
+/* ARRAYS */
+LAYER_PROPERTIES LAYERS[4];
+
+char TILE_WALL_ARRAY[640];
+char TILE_BLOCK_ARRAY[640];
+OBJECT_PROPERTY ENTITY_LIST[0x40];
+OBJECT_PROPERTY UI_LIST[0x20];
+OBJECT_UPDATE UPDATE_LIST[0x40];
+
+/* ALL FUNCTIONS */
 int main() {
+	OBJECT_PROPERTY Plr = {OBJECT_ID_PLAYER, OBJECT_FLAG_PRESENT, COLOR_PICKER(1, 1, 3), 20, 30, 40, 40};
+	int i = 0;
+
 	VGA_INIT();
+	INIT_LAYERS();
+
+	/* Remove when world gen is automated (with seeds) */
+	for (i = 0; i < 32; i++) {
+		TILE_BLOCK_ARRAY[(32 * 10) + i] = BLOCK_TYPE_GRASS;
+	}
+
+	for (i = 0; i < 288; i++) {
+		TILE_BLOCK_ARRAY[(32 * 11) + i] = BLOCK_TYPE_DIRT;
+	}
+
+	/* Load Objects */
+	CREATE_OBJECT(Plr, 0x02, 0x40);
 
 	while (INPUT_GET_KEY() != 0x2B) {
-		DRAW_CUBE(0x20, 10, 10, 20, 20);
+		LAYER_UPDATE();
+		
 		VGA_SWAP();
 	}
+
+	VGA_EXIT();
 	return 0;
 }
 
@@ -33,6 +120,17 @@ void VGA_INIT() {
 	inp.h.ah = 0x00;
 	inp.h.al = 0x13;
 	int86(0x10, &inp, &out);
+}
+
+void VGA_EXIT() {
+	union REGS inp, out;
+
+	/* Find a way to load the previous screen mode without assuming 3 */
+	inp.h.ah = 0x00;
+	inp.h.al = 0x03;
+	int86(0x10, &inp, &out);
+
+	/* Clear console */
 }
 
 void VGA_SWAP() {
@@ -47,26 +145,118 @@ void VGA_SWAP() {
 		Temp_Buffer[i] = 0x03030303;
 }
 
-void VGA_PLACE(uint_8 color, uint_16 x, uint_16 y) {
+void VGA_PLACE(uint_8 COLOR, uint_16 X, uint_16 Y) {
 	uint_8 far *Temp_Buffer = (uint_8 far *)TEMP;
-
-	Temp_Buffer[(y * 320) + x] = color;
+	Temp_Buffer[(Y * 320) + X] = COLOR;
 }
 
-void DRAW_CUBE(uint_8 color, uint_8 w, uint_8 h, uint_16 x, uint_16 y) {
+void DRAW_CUBE(uint_8 COLOR, uint_8 W, uint_8 H, uint_16 X, uint_16 Y) {
+	int i = 0, j;
+
+	for (; i < W; i++) {
+		for (j = 0; j < H; j++) {
+			VGA_PLACE(COLOR, X + i, Y + j);
+		}
+	}
+}
+
+void DRAW_OBJECT(OBJECT_PROPERTY OBJECT) {
+	DRAW_CUBE(OBJECT.COLOR, OBJECT.W, OBJECT.H, OBJECT.X, OBJECT.Y);
+}
+
+void DRAW_GRID(char *GRID) {
+	int x = 0, y = 0, i = 0;
+
+	for (; i < 640; i++) {
+		if (GRID[i] == 0)
+			continue;
+
+		x = i % 32;
+		y = i / 32;
+
+		switch(GRID[i]) {
+			case BLOCK_TYPE_DIRT:
+				DRAW_CUBE(0x12, 0xA, 0xA, x * 10, y * 10);
+				break;
+			case BLOCK_TYPE_GRASS:
+				DRAW_CUBE(0x90, 0xA, 0xA, x * 10, y * 10);
+				break;
+			default:
+				DRAW_CUBE(0x25, 0xA, 0xA, x * 10, y * 10);
+				break;
+		}
+	}
+}
+
+void INIT_LAYERS() {
+	LAYERS[0].ADDRESS = (uint_16)TILE_WALL_ARRAY;
+	LAYERS[0].SIZE = sizeof(TILE_WALL_ARRAY);
+	LAYERS[0].FLAGS = FLAG_2D_GRID | FLAG_COLLIDE_BASE;
+
+	LAYERS[1].ADDRESS = (uint_16)TILE_BLOCK_ARRAY;
+	LAYERS[1].SIZE = sizeof(TILE_BLOCK_ARRAY);
+	LAYERS[1].FLAGS = FLAG_2D_GRID | FLAG_COLLIDE_BASE;
+
+	LAYERS[2].ADDRESS = (uint_16)ENTITY_LIST;
+	LAYERS[2].SIZE = sizeof(ENTITY_LIST);
+	LAYERS[2].FLAGS = FLAG_COLLIDE_REACT;
+
+	LAYERS[3].ADDRESS = (uint_16)UI_LIST;
+	LAYERS[3].SIZE = sizeof(UI_LIST);
+	LAYERS[3].FLAGS = FLAG_UI;
+}
+
+void LAYER_UPDATE() {
+	OBJECT_PROPERTY *OBJECT;
 	int i = 0, j = 0;
 
-	for (; i < w; i++) {
-		for (j = 0; j < h; j++) {
-			VGA_PLACE(color, x + i, y + j);
+	for (; i < 4; i++) {
+		if (LAYERS[i].FLAGS & FLAG_2D_GRID) {
+			DRAW_GRID((char *)LAYERS[i].ADDRESS);
+		} else {
+			OBJECT = (OBJECT_PROPERTY *)LAYERS[i].ADDRESS;
+
+			for (j = 0; j < 0x20/*sizeof(LAYERS[i].SIZE) / sizeof(OBJECT_PROPERTY)*/; j++) {
+				if (OBJECT[j].FLAGS & OBJECT_FLAG_PRESENT)
+					DRAW_OBJECT(OBJECT[j]);
+			}
 		}
+	}
+}
+
+void LAYER_CHECK_COLLISION() {
+
+}
+
+void LAYER_CHECK_CLICK() {
+	
+}
+
+void CREATE_OBJECT(OBJECT_PROPERTY OBJECT, uint_8 LAYER, uint_16 LENGTH) {
+	OBJECT_PROPERTY *LIST = (OBJECT_PROPERTY *)LAYERS[LAYER].ADDRESS;
+	int i = 0;
+
+	if (LAYERS[LAYER].FLAGS & FLAG_2D_GRID)
+		return;
+
+	for (; i < LENGTH; i++) {
+		if (LIST[i].FLAGS & OBJECT_FLAG_PRESENT)
+			continue;
+
+		LIST[i] = OBJECT;
 	}
 }
 
 uint_8 INPUT_GET_KEY() {
 	uint_8 ASCII[] = {
 		0, 0x2B, '1', '2', '3', '4', '5', '6', '7', '8',
-		'9'
+		'9', '0', '-', '=', 0, 0, 'q', 'w', 'e', 'r', 't',
+		'y', 'u', 'i', 'i', 'o', 'p', '[', ']', 0xA, 0,
+		'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';',
+		'\'', '`', 0, '\\', 'z', 'x', 'c', 'v', 'b', 'n',
+		'm', ',', '.', '/', 0, '*', 0, ' ', 0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '-', 0, 0, 0, '+',
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	};
 
 	uint_8 key, index;
