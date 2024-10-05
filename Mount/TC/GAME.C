@@ -1,9 +1,11 @@
 #include <DOS.H>
+#include <STDIO.H>
 
 /* CONSTANTS */
-#define VIDEO 	0xA0000000
-#define TEMP  	0xB0000000
-#define SCREEN	0xFA00 / 0x02
+#define VIDEO 				0xA0000000
+#define TEMP  				0xB0000000
+#define SCREEN				0xFA00 / 0x02
+#define NULL				0
 
 #define FLAG_2D_GRID 		1<<0
 #define FLAG_COLLIDE_BASE	1<<1
@@ -24,6 +26,7 @@
 /* TYPES */
 typedef unsigned char 	uint_8;
 typedef unsigned short 	uint_16;
+typedef unsigned int   	uint_32;
 
 /* STRUCTURES */
 typedef struct {
@@ -48,6 +51,11 @@ typedef struct {
 	char Y_OFFSET;
 } OBJECT_UPDATE;
 
+typedef struct {
+	char KEY;
+	void *FUNCTION;
+} KEYBIND;
+
 /* VGA */
 void VGA_INIT();
 void VGA_EXIT();
@@ -63,13 +71,21 @@ void DRAW_GRID(char *);
 void INIT_LAYERS();
 void LAYER_UPDATE();
 void CREATE_OBJECT(OBJECT_PROPERTY, uint_8, uint_16);
+void SEND_OBJECT_UPDATE(uint_8, char, char);
 
 /* INPUT */
 uint_8 INPUT_GET_KEY();
+void interrupt ISR_KEYBOARD(void);
+void REGISTER_KEY_INPUT(uint_8, void *);
+void KEYBOARD_THREAD();
 
 /* SOUND (if there's time) */
 
 /* THREADS/TIMER */
+void ADD_THREAD(void *);
+void REMOVE_THREAD(void *);
+void TIMER_THREAD();
+void REGISTER_TIMER();
 
 /* FILE MANAGEMENT */
 
@@ -82,15 +98,58 @@ char TILE_WALL_ARRAY[640];
 char TILE_BLOCK_ARRAY[640];
 OBJECT_PROPERTY ENTITY_LIST[0x40];
 OBJECT_PROPERTY UI_LIST[0x20];
-OBJECT_UPDATE UPDATE_LIST[0x40];
+OBJECT_UPDATE UPDATE_LIST[0x20];
+
+KEYBIND KEYBINDS[0x10];
+char CURRENT_KEYS[0x10];
+uint_32 KEYBINDS_INDEX = 0;
+uint_32 CURRENT_KEYS_INDEX = 0;
+
+void *THREAD_LIST[0x20];
+
+
+void interrupt (*ISR_OLD)(void);
+char EXIT = 0;
 
 /* ALL FUNCTIONS */
+void Test_Left() {
+	SEND_OBJECT_UPDATE(OBJECT_ID_PLAYER, -1, 0);
+}
+
+void Test_Right() {
+	SEND_OBJECT_UPDATE(OBJECT_ID_PLAYER, 1, 0);
+}
+
+void Debug() {
+	printf("DEBUG\n");
+}
+
+void Exit_Loop() {
+	EXIT = 1;
+}
+
 int main() {
 	OBJECT_PROPERTY Plr = {OBJECT_ID_PLAYER, OBJECT_FLAG_PRESENT, COLOR_PICKER(1, 1, 3), 20, 30, 40, 40};
+	void (* THREAD)(void);
 	int i = 0;
 
+	ISR_OLD = getvect(0x09);
+    setvect(0x09, ISR_KEYBOARD);
+
+	/*REGISTER_KEY_INPUT('a', (void *)&Test_Left);
+	REGISTER_KEY_INPUT('d', (void *)&Test_Right);*/
+
+	REGISTER_KEY_INPUT('e', (void *)&Debug);
+	REGISTER_KEY_INPUT(0x2B, (void *)&Exit_Loop);
+
+	while (!EXIT) {
+		KEYBOARD_THREAD();
+	}
+
+	goto END;
+
 	VGA_INIT();
-	INIT_LAYERS();
+	INIT_LAYERS();	
 
 	/* Remove when world gen is automated (with seeds) */
 	for (i = 0; i < 32; i++) {
@@ -104,12 +163,22 @@ int main() {
 	/* Load Objects */
 	CREATE_OBJECT(Plr, 0x02, 0x40);
 
-	while (INPUT_GET_KEY() != 0x2B) {
-		LAYER_UPDATE();
-		
-		VGA_SWAP();
+	ADD_THREAD((void *)&LAYER_UPDATE);
+	ADD_THREAD((void *)&VGA_SWAP);
+	ADD_THREAD((void *)&KEYBOARD_THREAD);
+
+	while (!EXIT) {
+		for (i = 0; i < 0x20; i++) {
+			if (THREAD_LIST[i] != NULL) {
+				THREAD = (void *)THREAD_LIST[i];
+				THREAD();
+			}
+		}
 	}
 
+	END:
+
+	setvect(0x09, ISR_OLD);
 	VGA_EXIT();
 	return 0;
 }
@@ -208,7 +277,7 @@ void INIT_LAYERS() {
 
 void LAYER_UPDATE() {
 	OBJECT_PROPERTY *OBJECT;
-	int i = 0, j = 0;
+	int i = 0, j = 0, k = 0;
 
 	for (; i < 4; i++) {
 		if (LAYERS[i].FLAGS & FLAG_2D_GRID) {
@@ -216,8 +285,19 @@ void LAYER_UPDATE() {
 		} else {
 			OBJECT = (OBJECT_PROPERTY *)LAYERS[i].ADDRESS;
 
-			for (j = 0; j < 0x20/*sizeof(LAYERS[i].SIZE) / sizeof(OBJECT_PROPERTY)*/; j++) {
+			for (j = 0; j < 0x20; j++) {
 				if (OBJECT[j].FLAGS & OBJECT_FLAG_PRESENT)
+					if (!OBJECT[j].ID)
+						continue;
+					
+					for (k = 0; k < 0x20; k++) {
+						if (OBJECT[j].ID == UPDATE_LIST[k].ID) {
+							UPDATE_LIST[k].ID = 0;
+							OBJECT[j].X += UPDATE_LIST[k].X_OFFSET;
+							OBJECT[j].Y += UPDATE_LIST[k].Y_OFFSET;
+						}
+					}
+
 					DRAW_OBJECT(OBJECT[j]);
 			}
 		}
@@ -247,6 +327,20 @@ void CREATE_OBJECT(OBJECT_PROPERTY OBJECT, uint_8 LAYER, uint_16 LENGTH) {
 	}
 }
 
+void SEND_OBJECT_UPDATE(uint_8 ID, char X_OFFSET, char Y_OFFSET) {
+	int i = 0;
+
+	for (; i < 0x20; i++) {
+		if (UPDATE_LIST[i].ID)
+			continue;
+
+		UPDATE_LIST[i].ID = ID;
+		UPDATE_LIST[i].X_OFFSET = X_OFFSET;
+		UPDATE_LIST[i].Y_OFFSET = Y_OFFSET;
+		break;
+	}
+}
+
 uint_8 INPUT_GET_KEY() {
 	uint_8 ASCII[] = {
 		0, 0x2B, '1', '2', '3', '4', '5', '6', '7', '8',
@@ -267,4 +361,95 @@ uint_8 INPUT_GET_KEY() {
 
 	index = inp(0x60);
 	return ASCII[index];
-}
+}
+
+void REGISTER_KEY_INPUT(uint_8 KEY, void *FUNCTION) {
+	KEYBIND EVENT;
+	EVENT.KEY = KEY;
+	EVENT.FUNCTION = FUNCTION;
+	
+	if (KEYBINDS_INDEX >= 0x20)
+		return;
+
+	KEYBINDS[KEYBINDS_INDEX++] = EVENT;
+}
+
+void interrupt ISR_KEYBOARD(void) {
+	uint_32 i = 0;
+	uint_8 index;
+	
+	uint_8 ASCII[] = {
+		0, 0x2B, '1', '2', '3', '4', '5', '6', '7', '8',
+		'9', '0', '-', '=', 0, 0, 'q', 'w', 'e', 'r', 't',
+		'y', 'u', 'i', 'i', 'o', 'p', '[', ']', 0xA,
+		'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';',
+		'\'', '`', 0, '\\', 'z', 'x', 'c', 'v', 'b', 'n',
+		'm', ',', '.', '/', 0, '*', 0, ' ', 0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '-', 0, 0, 0, '+',
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	};
+
+	index = inp(0x60);
+
+	outp(0x20, 0x20);
+
+	if (index & 0x80) {
+		for (; i < 0x10; i++) {
+			if (CURRENT_KEYS[i] == ASCII[index & 0x7F])
+				CURRENT_KEYS[i] = 0;
+		}
+
+		printf("Key released: %c\n", ASCII[index & 0x7F]);
+	} else {
+		for (; i < 0x10; i++) {
+			if (CURRENT_KEYS[i] != 0)
+				continue;
+
+			CURRENT_KEYS[i] = ASCII[index];
+			break;
+		}
+
+		printf("Key held: %c\n", ASCII[index]);
+	}
+}
+
+void KEYBOARD_THREAD() {
+	void (* EVENT)(void);
+	int i = 0, j;
+
+	for (; i < KEYBINDS_INDEX; i++) {
+		for (j = 0; j < 0x10; j++) {
+			if (KEYBINDS[i].KEY == CURRENT_KEYS[j]) {
+				EVENT = (void *)KEYBINDS[i].FUNCTION;
+				EVENT();
+			}
+		}
+	}
+}
+
+void ADD_THREAD(void *FUNCTION) {
+	int i = 0;
+	
+	for (; i < 0x20; i++) {
+		if (THREAD_LIST[i] != NULL)
+			continue;
+
+		THREAD_LIST[i] = FUNCTION;
+		break;
+	}
+}
+
+void REMOVE_THREAD(void *FUNCTION) {
+	int i = 0;
+	
+	for (; i < 0x20; i++) {
+		if (THREAD_LIST[i] != FUNCTION)
+			continue;
+
+		THREAD_LIST[i] = NULL;
+		break;
+	}
+}
+
+
+
