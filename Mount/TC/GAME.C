@@ -21,7 +21,17 @@
 
 #define OBJECT_FLAG_PRESENT	1<<0
 
+#define THREAD_FLAG_ENABLED	1<<0
+#define THREAD_FLAG_TICK	1<<1
+#define THREAD_FLAG_LIMIT	1<<2
+#define THREAD_FLAG_ZERO	1<<3
+#define THREAD_FLAG_TIMED	1<<4
+#define THREAD_FLAG_WHILE	1<<5
+#define THREAD_FLAG_AFTER	1<<6
+#define THREAD_FLAG_DESTROY	1<<7
+
 #define COLOR_PICKER(R, G, B) ((R & 7) << 5) | ((G & 7) << 2) | (B & 3)
+#define MILLISECONDS_TO_TICKS(X) x / 55
 
 /* TYPES */
 typedef unsigned char 	uint_8;
@@ -56,6 +66,13 @@ typedef struct {
 	void *FUNCTION;
 } KEYBIND;
 
+typedef struct {
+	uint_8 FLAGS;
+	int TIMER;
+	void *MAIN_FUNC;
+	void *SUB_FUNC;
+} THREAD_PROPERTY;
+
 /* VGA */
 void VGA_INIT();
 void VGA_EXIT();
@@ -74,18 +91,23 @@ void CREATE_OBJECT(OBJECT_PROPERTY, uint_8, uint_16);
 void SEND_OBJECT_UPDATE(uint_8, char, char);
 
 /* INPUT */
-uint_8 INPUT_GET_KEY();
 void interrupt ISR_KEYBOARD(void);
+void interrupt ISR_MOUSE(void);
 void REGISTER_KEY_INPUT(uint_8, void *);
 void KEYBOARD_THREAD();
 
 /* SOUND (if there's time) */
 
 /* THREADS/TIMER */
+void interrupt ISR_TIMER(void);
+void ADD_THREAD_ENTRY(THREAD_PROPERTY ENTRY);
+void REMOVE_THREAD_ENTRY(int INDEX);
 void ADD_THREAD(void *);
-void REMOVE_THREAD(void *);
-void TIMER_THREAD();
-void REGISTER_TIMER();
+void ADD_LIMITED_THREAD(int, void *);
+void ADD_TIMER_WHILE_THREAD(int, void *);
+void ADD_TIMER_POST_THREAD(int, void *);
+void ADD_TIMER_THREAD(int, void *, void *);
+void RUN_NEXT_TICK(void *);
 
 /* FILE MANAGEMENT */
 
@@ -105,10 +127,12 @@ char CURRENT_KEYS[0x10];
 uint_32 KEYBINDS_INDEX = 0;
 uint_32 CURRENT_KEYS_INDEX = 0;
 
-void *THREAD_LIST[0x20];
+THREAD_PROPERTY THREAD_LIST[0x40];
 
 
-void interrupt (*ISR_OLD)(void);
+void interrupt (*ISR_KEYBOARD_OLD)(void);
+void interrupt (*ISR_MOUSE_OLD)(void);
+void interrupt (*ISR_TIMER_OLD)(void);
 char EXIT = 0;
 
 /* ALL FUNCTIONS */
@@ -120,10 +144,6 @@ void Test_Right() {
 	SEND_OBJECT_UPDATE(OBJECT_ID_PLAYER, 1, 0);
 }
 
-void Debug() {
-	printf("DEBUG\n");
-}
-
 void Exit_Loop() {
 	EXIT = 1;
 }
@@ -131,22 +151,22 @@ void Exit_Loop() {
 int main() {
 	OBJECT_PROPERTY Plr = {OBJECT_ID_PLAYER, OBJECT_FLAG_PRESENT, COLOR_PICKER(1, 1, 3), 20, 30, 40, 40};
 	void (* THREAD)(void);
+	union REGS inp, outp;
 	int i = 0;
 
-	ISR_OLD = getvect(0x09);
+	inp.x.ax = 0x00;
+	int86(0x33, &inp, &outp);
+
+	ISR_KEYBOARD_OLD = getvect(0x09);
+	ISR_MOUSE_OLD = getvect(0x74);
+	ISR_TIMER_OLD = getvect(0x1C);
     setvect(0x09, ISR_KEYBOARD);
+    setvect(0x74, ISR_MOUSE);
+    setvect(0x1C, ISR_TIMER);
 
-	/*REGISTER_KEY_INPUT('a', (void *)&Test_Left);
-	REGISTER_KEY_INPUT('d', (void *)&Test_Right);*/
-
-	REGISTER_KEY_INPUT('e', (void *)&Debug);
+	REGISTER_KEY_INPUT('a', (void *)&Test_Left);
+	REGISTER_KEY_INPUT('d', (void *)&Test_Right);
 	REGISTER_KEY_INPUT(0x2B, (void *)&Exit_Loop);
-
-	while (!EXIT) {
-		KEYBOARD_THREAD();
-	}
-
-	goto END;
 
 	VGA_INIT();
 	INIT_LAYERS();	
@@ -168,36 +188,41 @@ int main() {
 	ADD_THREAD((void *)&KEYBOARD_THREAD);
 
 	while (!EXIT) {
-		for (i = 0; i < 0x20; i++) {
-			if (THREAD_LIST[i] != NULL) {
-				THREAD = (void *)THREAD_LIST[i];
-				THREAD();
-			}
+		for (i = 0; i < 0x40; i++) {
+			if (!(THREAD_LIST[i].FLAGS & THREAD_FLAG_ENABLED) || THREAD_LIST[i].FLAGS & THREAD_FLAG_TIMED)
+				continue;
+
+			THREAD = (void (*)(void))THREAD_LIST[i].MAIN_FUNC;
+			THREAD();
+
+			if (THREAD_LIST[i].FLAGS & THREAD_FLAG_LIMIT)
+				if (--THREAD_LIST[i].TIMER <= 0)
+					REMOVE_THREAD_ENTRY(i);
 		}
 	}
 
-	END:
-
-	setvect(0x09, ISR_OLD);
+	setvect(0x09, ISR_KEYBOARD_OLD);
+    setvect(0x74, ISR_MOUSE_OLD);
+	setvect(0x1C, ISR_TIMER_OLD);
 	VGA_EXIT();
 	return 0;
 }
 
 void VGA_INIT() {
-	union REGS inp, out;
+	union REGS inp, outp;
 
 	inp.h.ah = 0x00;
 	inp.h.al = 0x13;
-	int86(0x10, &inp, &out);
+	int86(0x10, &inp, &outp);
 }
 
 void VGA_EXIT() {
-	union REGS inp, out;
+	union REGS inp, outp;
 
 	/* Find a way to load the previous screen mode without assuming 3 */
 	inp.h.ah = 0x00;
 	inp.h.al = 0x03;
-	int86(0x10, &inp, &out);
+	int86(0x10, &inp, &outp);
 
 	/* Clear console */
 }
@@ -294,7 +319,9 @@ void LAYER_UPDATE() {
 						if (OBJECT[j].ID == UPDATE_LIST[k].ID) {
 							UPDATE_LIST[k].ID = 0;
 							OBJECT[j].X += UPDATE_LIST[k].X_OFFSET;
+							OBJECT[j].W += UPDATE_LIST[k].X_OFFSET;
 							OBJECT[j].Y += UPDATE_LIST[k].Y_OFFSET;
+							OBJECT[j].H += UPDATE_LIST[k].Y_OFFSET;
 						}
 					}
 
@@ -341,28 +368,6 @@ void SEND_OBJECT_UPDATE(uint_8 ID, char X_OFFSET, char Y_OFFSET) {
 	}
 }
 
-uint_8 INPUT_GET_KEY() {
-	uint_8 ASCII[] = {
-		0, 0x2B, '1', '2', '3', '4', '5', '6', '7', '8',
-		'9', '0', '-', '=', 0, 0, 'q', 'w', 'e', 'r', 't',
-		'y', 'u', 'i', 'i', 'o', 'p', '[', ']', 0xA, 0,
-		'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';',
-		'\'', '`', 0, '\\', 'z', 'x', 'c', 'v', 'b', 'n',
-		'm', ',', '.', '/', 0, '*', 0, ' ', 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '-', 0, 0, 0, '+',
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	};
-
-	uint_8 key, index;
-
-	key = inp(0x64);
-	if (key & 1 == 0)
-		return 0;
-
-	index = inp(0x60);
-	return ASCII[index];
-}
-
 void REGISTER_KEY_INPUT(uint_8 KEY, void *FUNCTION) {
 	KEYBIND EVENT;
 	EVENT.KEY = KEY;
@@ -381,7 +386,7 @@ void interrupt ISR_KEYBOARD(void) {
 	uint_8 ASCII[] = {
 		0, 0x2B, '1', '2', '3', '4', '5', '6', '7', '8',
 		'9', '0', '-', '=', 0, 0, 'q', 'w', 'e', 'r', 't',
-		'y', 'u', 'i', 'i', 'o', 'p', '[', ']', 0xA,
+		'y', 'u', 'i', 'o', 'p', '[', ']', 0xA, 0,
 		'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';',
 		'\'', '`', 0, '\\', 'z', 'x', 'c', 'v', 'b', 'n',
 		'm', ',', '.', '/', 0, '*', 0, ' ', 0, 0, 0, 0, 0,
@@ -398,19 +403,44 @@ void interrupt ISR_KEYBOARD(void) {
 			if (CURRENT_KEYS[i] == ASCII[index & 0x7F])
 				CURRENT_KEYS[i] = 0;
 		}
-
-		printf("Key released: %c\n", ASCII[index & 0x7F]);
 	} else {
-		for (; i < 0x10; i++) {
+		for (; i < 0x10; i++)
+			if (CURRENT_KEYS[i] == ASCII[index])
+				return;
+
+		for (i = 0; i < 0x10; i++) {
 			if (CURRENT_KEYS[i] != 0)
 				continue;
 
 			CURRENT_KEYS[i] = ASCII[index];
 			break;
 		}
-
-		printf("Key held: %c\n", ASCII[index]);
 	}
+}
+
+void interrupt ISR_MOUSE(void) {
+	union REGS inp, outp;
+
+	inp.x.ax = 0x03;
+	int86(0x33, &inp, &outp);
+	outp(0x20, 0x20);
+
+	if (outp.x.bx & 1) {
+		/*LMB*/
+	}
+
+	if (outp.x.bx & 2) {
+		/*RMB*/
+	}
+
+	if (outp.x.cx > 320) {
+		inp.x.ax = 4;
+		inp.x.cx = 319;
+		inp.x.dx = outp.x.dx;
+		int86(0x33, &inp, &outp);
+	}
+
+	ISR_MOUSE_OLD();
 }
 
 void KEYBOARD_THREAD() {
@@ -420,36 +450,134 @@ void KEYBOARD_THREAD() {
 	for (; i < KEYBINDS_INDEX; i++) {
 		for (j = 0; j < 0x10; j++) {
 			if (KEYBINDS[i].KEY == CURRENT_KEYS[j]) {
-				EVENT = (void *)KEYBINDS[i].FUNCTION;
-				EVENT();
+				EVENT = (void (*)(void))KEYBINDS[i].FUNCTION;
+				RUN_NEXT_TICK((void *)EVENT);
 			}
 		}
 	}
 }
 
+void interrupt ISR_TIMER(void) {
+	void (* EVENT)(void);
+	int i = 0;
+	
+	ISR_TIMER_OLD();
+	outp(0x20, 0x20);
+
+	for (; i < 0x40; i++) {
+		if (!(THREAD_LIST[i].FLAGS & THREAD_FLAG_TIMED))
+			continue;
+
+		if (THREAD_LIST[i].FLAGS & THREAD_FLAG_TICK) {
+			EVENT = (void (*)(void))THREAD_LIST[i].MAIN_FUNC;
+			EVENT();
+			REMOVE_THREAD_ENTRY(i);
+			continue;
+		}
+
+		if (THREAD_LIST[i].FLAGS & THREAD_FLAG_WHILE && THREAD_LIST[i].FLAGS & THREAD_FLAG_AFTER) {
+			EVENT = (void (*)(void))THREAD_LIST[i].MAIN_FUNC;
+			EVENT();
+			THREAD_LIST[i].TIMER -= 55;
+
+			if (THREAD_LIST[i].TIMER <= 0) {
+				EVENT = (void (*)(void))THREAD_LIST[i].SUB_FUNC;
+				EVENT();
+				REMOVE_THREAD_ENTRY(i);
+			}
+		} else if (THREAD_LIST[i].FLAGS & THREAD_FLAG_WHILE) {
+			EVENT = (void (*)(void))THREAD_LIST[i].MAIN_FUNC;
+			EVENT();
+			THREAD_LIST[i].TIMER -= 55;
+
+			if (THREAD_LIST[i].TIMER <= 0) {
+				REMOVE_THREAD_ENTRY(i);
+			}
+		} else if (THREAD_LIST[i].FLAGS & THREAD_FLAG_AFTER) {
+			THREAD_LIST[i].TIMER -= 55;
+
+			if (THREAD_LIST[i].TIMER <= 0) {
+				EVENT = (void (*)(void))THREAD_LIST[i].MAIN_FUNC;
+				EVENT();
+				REMOVE_THREAD_ENTRY(i);
+			}
+		}
+	}
+}
+
+void ADD_THREAD_ENTRY(THREAD_PROPERTY ENTRY) {
+	int i = 0;
+	
+	for (; i < 0x40; i++) {
+		if (THREAD_LIST[i].FLAGS & THREAD_FLAG_ENABLED) {
+			if (THREAD_LIST[i].MAIN_FUNC == ENTRY.MAIN_FUNC)
+				break;
+
+			continue;
+		}
+
+		THREAD_LIST[i] = ENTRY;
+		THREAD_LIST[i].FLAGS |= THREAD_FLAG_ENABLED;
+		break;
+	}
+}
+
+void REMOVE_THREAD_ENTRY(int INDEX) {
+	THREAD_LIST[INDEX].FLAGS = 0;
+}
+
 void ADD_THREAD(void *FUNCTION) {
-	int i = 0;
-	
-	for (; i < 0x20; i++) {
-		if (THREAD_LIST[i] != NULL)
-			continue;
+	THREAD_PROPERTY Thread;
 
-		THREAD_LIST[i] = FUNCTION;
-		break;
-	}
+	Thread.MAIN_FUNC = FUNCTION;
+	ADD_THREAD_ENTRY(Thread);
 }
 
-void REMOVE_THREAD(void *FUNCTION) {
-	int i = 0;
-	
-	for (; i < 0x20; i++) {
-		if (THREAD_LIST[i] != FUNCTION)
-			continue;
+void ADD_LIMITED_THREAD(int ROUNDS, void *FUNCTION) {
+	THREAD_PROPERTY Thread;
 
-		THREAD_LIST[i] = NULL;
-		break;
-	}
+	Thread.FLAGS = THREAD_FLAG_LIMIT;
+	Thread.TIMER = ROUNDS;
+	Thread.MAIN_FUNC = FUNCTION;
+	ADD_THREAD_ENTRY(Thread);
 }
+
+void ADD_TIMER_WHILE_THREAD(int TIME, void *FUNCTION) {
+	THREAD_PROPERTY Thread;
+
+	Thread.FLAGS = THREAD_FLAG_TIMED | THREAD_FLAG_WHILE;
+	Thread.TIMER = TIME;
+	Thread.MAIN_FUNC = FUNCTION;
+	ADD_THREAD_ENTRY(Thread);
+}
+
+void ADD_TIMER_POST_THREAD(int TIME, void *FUNCTION) {
+	THREAD_PROPERTY Thread;
+
+	Thread.FLAGS = THREAD_FLAG_TIMED | THREAD_FLAG_AFTER;
+	Thread.TIMER = TIME;
+	Thread.MAIN_FUNC = FUNCTION;
+	ADD_THREAD_ENTRY(Thread);
+}
+
+void ADD_TIMER_THREAD(int TIME, void *FUNCTION_MAIN, void *FUNCTION_POST) {
+	THREAD_PROPERTY Thread;
+
+	Thread.FLAGS = THREAD_FLAG_TIMED | THREAD_FLAG_WHILE | THREAD_FLAG_AFTER;
+	Thread.TIMER = TIME;
+	Thread.MAIN_FUNC = FUNCTION_MAIN;
+	Thread.SUB_FUNC = FUNCTION_POST;
+	ADD_THREAD_ENTRY(Thread);
+}
+
+void RUN_NEXT_TICK(void *FUNCTION) {
+	THREAD_PROPERTY Thread;
+
+	Thread.FLAGS = THREAD_FLAG_TIMED | THREAD_FLAG_TICK;
+	Thread.MAIN_FUNC = FUNCTION;
+	ADD_THREAD_ENTRY(Thread);
+}
+
 
 
 
