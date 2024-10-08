@@ -15,6 +15,9 @@
 #define BLOCK_TYPE_NULL		0x00
 #define BLOCK_TYPE_DIRT		0x01
 #define BLOCK_TYPE_GRASS	0x02
+#define BLOCK_TYPE_PINK		0x03
+#define BLOCK_TYPE_BLACK	0x04
+#define BLOCK_TYPE_ORANGE	0x05
 
 #define OBJECT_ID_NULL		0x00
 #define OBJECT_ID_PLAYER	0x01
@@ -31,7 +34,6 @@
 #define THREAD_FLAG_DESTROY	1<<7
 
 #define COLOR_PICKER(R, G, B) ((R & 7) << 5) | ((G & 7) << 2) | (B & 3)
-#define MILLISECONDS_TO_TICKS(X) x / 55
 
 /* TYPES */
 typedef unsigned char 	uint_8;
@@ -86,7 +88,7 @@ void DRAW_GRID(char *);
 
 /* LAYERS/OBJECTS */
 void INIT_LAYERS();
-void LAYER_UPDATE();
+void LAYER_THREAD();
 void CREATE_OBJECT(OBJECT_PROPERTY, uint_8, uint_16);
 void SEND_OBJECT_UPDATE(uint_8, char, char);
 
@@ -114,12 +116,10 @@ void RUN_NEXT_TICK(void *);
 /* WORLD GEN */
 
 /* ARRAYS */
-LAYER_PROPERTIES LAYERS[4];
+LAYER_PROPERTIES LAYERS[2];
 
-char TILE_WALL_ARRAY[640];
 char TILE_BLOCK_ARRAY[640];
 OBJECT_PROPERTY ENTITY_LIST[0x40];
-OBJECT_PROPERTY UI_LIST[0x20];
 OBJECT_UPDATE UPDATE_LIST[0x20];
 
 KEYBIND KEYBINDS[0x10];
@@ -133,15 +133,29 @@ THREAD_PROPERTY THREAD_LIST[0x40];
 void interrupt (*ISR_KEYBOARD_OLD)(void);
 void interrupt (*ISR_MOUSE_OLD)(void);
 void interrupt (*ISR_TIMER_OLD)(void);
+int X_MOUSE = 0, Y_MOUSE = 0;
+int COLOR_PICKED = BLOCK_TYPE_GRASS;
 char EXIT = 0;
 
 /* ALL FUNCTIONS */
-void Test_Left() {
-	SEND_OBJECT_UPDATE(OBJECT_ID_PLAYER, -1, 0);
+void Block_Change_1() {
+	COLOR_PICKED = BLOCK_TYPE_GRASS;
 }
 
-void Test_Right() {
-	SEND_OBJECT_UPDATE(OBJECT_ID_PLAYER, 1, 0);
+void Block_Change_2() {
+	COLOR_PICKED = BLOCK_TYPE_DIRT;
+}
+
+void Block_Change_3() {
+	COLOR_PICKED = BLOCK_TYPE_PINK;
+}
+
+void Block_Change_4() {
+	COLOR_PICKED = BLOCK_TYPE_BLACK;
+}
+
+void Block_Change_5() {
+	COLOR_PICKED = BLOCK_TYPE_ORANGE;
 }
 
 void Exit_Loop() {
@@ -160,12 +174,15 @@ int main() {
 	ISR_KEYBOARD_OLD = getvect(0x09);
 	ISR_MOUSE_OLD = getvect(0x74);
 	ISR_TIMER_OLD = getvect(0x1C);
-    setvect(0x09, ISR_KEYBOARD);
-    setvect(0x74, ISR_MOUSE);
-    setvect(0x1C, ISR_TIMER);
+	setvect(0x09, ISR_KEYBOARD);
+	setvect(0x74, ISR_MOUSE);
+	/*setvect(0x1C, ISR_TIMER);*/
 
-	REGISTER_KEY_INPUT('a', (void *)&Test_Left);
-	REGISTER_KEY_INPUT('d', (void *)&Test_Right);
+	REGISTER_KEY_INPUT('1', (void *)&Block_Change_1);
+	REGISTER_KEY_INPUT('2', (void *)&Block_Change_2);
+	REGISTER_KEY_INPUT('3', (void *)&Block_Change_3);
+	REGISTER_KEY_INPUT('4', (void *)&Block_Change_4);
+	REGISTER_KEY_INPUT('5', (void *)&Block_Change_5);
 	REGISTER_KEY_INPUT(0x2B, (void *)&Exit_Loop);
 
 	VGA_INIT();
@@ -180,15 +197,18 @@ int main() {
 		TILE_BLOCK_ARRAY[(32 * 11) + i] = BLOCK_TYPE_DIRT;
 	}
 
-	/* Load Objects */
-	CREATE_OBJECT(Plr, 0x02, 0x40);
+	/* Load Objects * /
+	CREATE_OBJECT(Plr, 0x01, 0x40);*/
 
-	ADD_THREAD((void *)&LAYER_UPDATE);
+	ADD_THREAD((void *)&LAYER_THREAD);
 	ADD_THREAD((void *)&VGA_SWAP);
 	ADD_THREAD((void *)&KEYBOARD_THREAD);
 
 	while (!EXIT) {
-		for (i = 0; i < 0x40; i++) {
+		LAYER_THREAD();
+		VGA_SWAP();
+		KEYBOARD_THREAD();
+		/*for (i = 0; i < 0x40; i++) {
 			if (!(THREAD_LIST[i].FLAGS & THREAD_FLAG_ENABLED) || THREAD_LIST[i].FLAGS & THREAD_FLAG_TIMED)
 				continue;
 
@@ -198,7 +218,7 @@ int main() {
 			if (THREAD_LIST[i].FLAGS & THREAD_FLAG_LIMIT)
 				if (--THREAD_LIST[i].TIMER <= 0)
 					REMOVE_THREAD_ENTRY(i);
-		}
+		}*/
 	}
 
 	setvect(0x09, ISR_KEYBOARD_OLD);
@@ -232,11 +252,10 @@ void VGA_SWAP() {
 	int far *Temp_Buffer = (int far *)TEMP;
 	int i = 0;
 
-	for (; i < SCREEN; i++)
+	for (; i < SCREEN; i++) {
 		Video_Buffer[i] = Temp_Buffer[i];
-
-	for (i = 0; i < SCREEN; i++)
 		Temp_Buffer[i] = 0x03030303;
+	}
 }
 
 void VGA_PLACE(uint_8 COLOR, uint_16 X, uint_16 Y) {
@@ -275,6 +294,15 @@ void DRAW_GRID(char *GRID) {
 			case BLOCK_TYPE_GRASS:
 				DRAW_CUBE(0x90, 0xA, 0xA, x * 10, y * 10);
 				break;
+			case BLOCK_TYPE_PINK:
+				DRAW_CUBE(173, 0xA, 0xA, x * 10, y * 10);
+				break;
+			case BLOCK_TYPE_BLACK:
+				DRAW_CUBE(0x00, 0xA, 0xA, x * 10, y * 10);
+				break;
+			case BLOCK_TYPE_ORANGE:
+				DRAW_CUBE(0x81, 0xA, 0xA, x * 10, y * 10);
+				break;
 			default:
 				DRAW_CUBE(0x25, 0xA, 0xA, x * 10, y * 10);
 				break;
@@ -283,52 +311,49 @@ void DRAW_GRID(char *GRID) {
 }
 
 void INIT_LAYERS() {
-	LAYERS[0].ADDRESS = (uint_16)TILE_WALL_ARRAY;
-	LAYERS[0].SIZE = sizeof(TILE_WALL_ARRAY);
+	LAYERS[0].ADDRESS = (uint_16)TILE_BLOCK_ARRAY;
+	LAYERS[0].SIZE = sizeof(TILE_BLOCK_ARRAY);
 	LAYERS[0].FLAGS = FLAG_2D_GRID | FLAG_COLLIDE_BASE;
 
-	LAYERS[1].ADDRESS = (uint_16)TILE_BLOCK_ARRAY;
-	LAYERS[1].SIZE = sizeof(TILE_BLOCK_ARRAY);
-	LAYERS[1].FLAGS = FLAG_2D_GRID | FLAG_COLLIDE_BASE;
-
-	LAYERS[2].ADDRESS = (uint_16)ENTITY_LIST;
-	LAYERS[2].SIZE = sizeof(ENTITY_LIST);
-	LAYERS[2].FLAGS = FLAG_COLLIDE_REACT;
-
-	LAYERS[3].ADDRESS = (uint_16)UI_LIST;
-	LAYERS[3].SIZE = sizeof(UI_LIST);
-	LAYERS[3].FLAGS = FLAG_UI;
+	LAYERS[1].ADDRESS = (uint_16)ENTITY_LIST;
+	LAYERS[1].SIZE = sizeof(ENTITY_LIST);
+	LAYERS[1].FLAGS = FLAG_COLLIDE_REACT;
 }
 
-void LAYER_UPDATE() {
+void LAYER_THREAD() {
+	uint_8 far *Temp_Buffer = (uint_8 far *)TEMP;
 	OBJECT_PROPERTY *OBJECT;
 	int i = 0, j = 0, k = 0;
 
-	for (; i < 4; i++) {
+	for (; i < 1; i++) {
 		if (LAYERS[i].FLAGS & FLAG_2D_GRID) {
 			DRAW_GRID((char *)LAYERS[i].ADDRESS);
 		} else {
-			OBJECT = (OBJECT_PROPERTY *)LAYERS[i].ADDRESS;
+			/*OBJECT = (OBJECT_PROPERTY *)LAYERS[i].ADDRESS;
 
 			for (j = 0; j < 0x20; j++) {
 				if (OBJECT[j].FLAGS & OBJECT_FLAG_PRESENT)
 					if (!OBJECT[j].ID)
 						continue;
 					
-					for (k = 0; k < 0x20; k++) {
-						if (OBJECT[j].ID == UPDATE_LIST[k].ID) {
-							UPDATE_LIST[k].ID = 0;
-							OBJECT[j].X += UPDATE_LIST[k].X_OFFSET;
-							OBJECT[j].W += UPDATE_LIST[k].X_OFFSET;
-							OBJECT[j].Y += UPDATE_LIST[k].Y_OFFSET;
-							OBJECT[j].H += UPDATE_LIST[k].Y_OFFSET;
-						}
+				for (k = 0; k < 0x20; k++) {
+					if (OBJECT[j].ID == UPDATE_LIST[k].ID) {
+						UPDATE_LIST[k].ID = 0;
+						OBJECT[j].X += UPDATE_LIST[k].X_OFFSET;
+						OBJECT[j].W += UPDATE_LIST[k].X_OFFSET;
+						OBJECT[j].Y += UPDATE_LIST[k].Y_OFFSET;
+						OBJECT[j].H += UPDATE_LIST[k].Y_OFFSET;
 					}
+				}
 
-					DRAW_OBJECT(OBJECT[j]);
-			}
+				DRAW_OBJECT(OBJECT[j]);
+			}*/
 		}
 	}
+
+	for (i = 0; i < 10; i++)
+		for (j = 0; j < 10 - i; j++)
+			Temp_Buffer[((Y_MOUSE + j) * 320) + (X_MOUSE + i)] = 0x7F;
 }
 
 void LAYER_CHECK_COLLISION() {
@@ -427,10 +452,12 @@ void interrupt ISR_MOUSE(void) {
 
 	if (outp.x.bx & 1) {
 		/*LMB*/
+		TILE_BLOCK_ARRAY[((Y_MOUSE / 10) * 32) + (X_MOUSE / 10)] = COLOR_PICKED;
 	}
 
 	if (outp.x.bx & 2) {
 		/*RMB*/
+		TILE_BLOCK_ARRAY[((Y_MOUSE / 10) * 32) + (X_MOUSE / 10)] = BLOCK_TYPE_NULL;
 	}
 
 	if (outp.x.cx > 320) {
@@ -439,6 +466,9 @@ void interrupt ISR_MOUSE(void) {
 		inp.x.dx = outp.x.dx;
 		int86(0x33, &inp, &outp);
 	}
+
+	X_MOUSE = outp.x.cx;
+	Y_MOUSE = outp.x.dx;
 
 	ISR_MOUSE_OLD();
 }
@@ -451,7 +481,8 @@ void KEYBOARD_THREAD() {
 		for (j = 0; j < 0x10; j++) {
 			if (KEYBINDS[i].KEY == CURRENT_KEYS[j]) {
 				EVENT = (void (*)(void))KEYBINDS[i].FUNCTION;
-				RUN_NEXT_TICK((void *)EVENT);
+				/*RUN_NEXT_TICK((void *)EVENT);*/
+				EVENT();
 			}
 		}
 	}
