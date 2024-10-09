@@ -40,6 +40,14 @@ typedef unsigned char 	uint_8;
 typedef unsigned short 	uint_16;
 typedef unsigned int   	uint_32;
 
+/* ENUMS */
+enum DIRECTION {
+	DIRECTION_TOP,
+	DIRECTION_BOTTOM,
+	DIRECTION_LEFT,
+	DIRECTION_RIGHT,
+};
+
 /* STRUCTURES */
 typedef struct {
 	uint_16 ADDRESS;
@@ -89,6 +97,7 @@ void DRAW_GRID(char *);
 /* LAYERS/OBJECTS */
 void INIT_LAYERS();
 void LAYER_THREAD();
+char LAYER_CHECK_COLLISION(uint_8, enum DIRECTION);
 void CREATE_OBJECT(OBJECT_PROPERTY, uint_8, uint_16);
 void SEND_OBJECT_UPDATE(uint_8, char, char);
 
@@ -126,16 +135,15 @@ KEYBIND KEYBINDS[0x10];
 char CURRENT_KEYS[0x10];
 uint_32 KEYBINDS_INDEX = 0;
 uint_32 CURRENT_KEYS_INDEX = 0;
-
 THREAD_PROPERTY THREAD_LIST[0x40];
 
-
+/* MISC */
 void interrupt (*ISR_KEYBOARD_OLD)(void);
 void interrupt (*ISR_MOUSE_OLD)(void);
 void interrupt (*ISR_TIMER_OLD)(void);
-int X_MOUSE = 0, Y_MOUSE = 0;
 int COLOR_PICKED = BLOCK_TYPE_GRASS;
-char EXIT = 0;
+int X_MOUSE = 0, Y_MOUSE = 0;
+char EXIT = 0, JUMPING = 0;
 
 /* ALL FUNCTIONS */
 void Block_Change_1() {
@@ -158,6 +166,45 @@ void Block_Change_5() {
 	COLOR_PICKED = BLOCK_TYPE_ORANGE;
 }
 
+void Player_Left() {
+	if (!LAYER_CHECK_COLLISION(OBJECT_ID_PLAYER, DIRECTION_LEFT))
+		SEND_OBJECT_UPDATE(OBJECT_ID_PLAYER, -1, 0);
+}
+
+void Player_Right() {
+	if (!LAYER_CHECK_COLLISION(OBJECT_ID_PLAYER, DIRECTION_RIGHT))
+		SEND_OBJECT_UPDATE(OBJECT_ID_PLAYER, 1, 0);
+}
+
+void _Sub_Jump_While() {
+	if (!LAYER_CHECK_COLLISION(OBJECT_ID_PLAYER, DIRECTION_TOP))
+		SEND_OBJECT_UPDATE(OBJECT_ID_PLAYER, 0, -1);
+}
+
+void _Sub_Jump_Post() {
+	JUMPING &= 2;
+}
+
+void Player_Jump() {
+	if (JUMPING & 2)
+		return;
+
+	JUMPING = 3;
+	ADD_TIMER_THREAD(825, (void *)&_Sub_Jump_While, (void *)&_Sub_Jump_Post);
+}
+
+void Player_Fall() {
+	if (JUMPING & 1)
+		return;
+
+	
+
+	if (!LAYER_CHECK_COLLISION(OBJECT_ID_PLAYER, DIRECTION_BOTTOM))
+		SEND_OBJECT_UPDATE(OBJECT_ID_PLAYER, 0, 1);
+	else
+		JUMPING = 0;
+}
+
 void Exit_Loop() {
 	EXIT = 1;
 }
@@ -176,13 +223,16 @@ int main() {
 	ISR_TIMER_OLD = getvect(0x1C);
 	setvect(0x09, ISR_KEYBOARD);
 	setvect(0x74, ISR_MOUSE);
-	/*setvect(0x1C, ISR_TIMER);*/
+	setvect(0x1C, ISR_TIMER);
 
 	REGISTER_KEY_INPUT('1', (void *)&Block_Change_1);
 	REGISTER_KEY_INPUT('2', (void *)&Block_Change_2);
 	REGISTER_KEY_INPUT('3', (void *)&Block_Change_3);
 	REGISTER_KEY_INPUT('4', (void *)&Block_Change_4);
 	REGISTER_KEY_INPUT('5', (void *)&Block_Change_5);
+	REGISTER_KEY_INPUT('a', (void *)&Player_Left);
+	REGISTER_KEY_INPUT('d', (void *)&Player_Right);
+	REGISTER_KEY_INPUT(' ', (void *)&Player_Jump);
 	REGISTER_KEY_INPUT(0x2B, (void *)&Exit_Loop);
 
 	VGA_INIT();
@@ -197,18 +247,19 @@ int main() {
 		TILE_BLOCK_ARRAY[(32 * 11) + i] = BLOCK_TYPE_DIRT;
 	}
 
-	/* Load Objects * /
-	CREATE_OBJECT(Plr, 0x01, 0x40);*/
+	/* Load Objects */
+	CREATE_OBJECT(Plr, 0x01, 0x40);
 
 	ADD_THREAD((void *)&LAYER_THREAD);
 	ADD_THREAD((void *)&VGA_SWAP);
 	ADD_THREAD((void *)&KEYBOARD_THREAD);
+	ADD_THREAD((void *)&Player_Fall);
 
 	while (!EXIT) {
 		LAYER_THREAD();
 		VGA_SWAP();
 		KEYBOARD_THREAD();
-		/*for (i = 0; i < 0x40; i++) {
+		for (i = 0; i < 0x40; i++) {
 			if (!(THREAD_LIST[i].FLAGS & THREAD_FLAG_ENABLED) || THREAD_LIST[i].FLAGS & THREAD_FLAG_TIMED)
 				continue;
 
@@ -218,7 +269,7 @@ int main() {
 			if (THREAD_LIST[i].FLAGS & THREAD_FLAG_LIMIT)
 				if (--THREAD_LIST[i].TIMER <= 0)
 					REMOVE_THREAD_ENTRY(i);
-		}*/
+		}
 	}
 
 	setvect(0x09, ISR_KEYBOARD_OLD);
@@ -295,13 +346,13 @@ void DRAW_GRID(char *GRID) {
 				DRAW_CUBE(0x90, 0xA, 0xA, x * 10, y * 10);
 				break;
 			case BLOCK_TYPE_PINK:
-				DRAW_CUBE(173, 0xA, 0xA, x * 10, y * 10);
+				DRAW_CUBE(0x81, 0xA, 0xA, x * 10, y * 10);
 				break;
 			case BLOCK_TYPE_BLACK:
 				DRAW_CUBE(0x00, 0xA, 0xA, x * 10, y * 10);
 				break;
 			case BLOCK_TYPE_ORANGE:
-				DRAW_CUBE(0x81, 0xA, 0xA, x * 10, y * 10);
+				DRAW_CUBE(66, 0xA, 0xA, x * 10, y * 10);
 				break;
 			default:
 				DRAW_CUBE(0x25, 0xA, 0xA, x * 10, y * 10);
@@ -325,29 +376,28 @@ void LAYER_THREAD() {
 	OBJECT_PROPERTY *OBJECT;
 	int i = 0, j = 0, k = 0;
 
-	for (; i < 1; i++) {
+	for (; i < 2; i++) {
 		if (LAYERS[i].FLAGS & FLAG_2D_GRID) {
 			DRAW_GRID((char *)LAYERS[i].ADDRESS);
 		} else {
-			/*OBJECT = (OBJECT_PROPERTY *)LAYERS[i].ADDRESS;
+			OBJECT = (OBJECT_PROPERTY *)LAYERS[i].ADDRESS;
 
-			for (j = 0; j < 0x20; j++) {
-				if (OBJECT[j].FLAGS & OBJECT_FLAG_PRESENT)
-					if (!OBJECT[j].ID)
-						continue;
+			for (j = 0; j < 0x40; j++) {
+				if (!(OBJECT[j].FLAGS & OBJECT_FLAG_PRESENT) || OBJECT[j].ID == 0)
+					continue;
 					
 				for (k = 0; k < 0x20; k++) {
 					if (OBJECT[j].ID == UPDATE_LIST[k].ID) {
 						UPDATE_LIST[k].ID = 0;
 						OBJECT[j].X += UPDATE_LIST[k].X_OFFSET;
-						OBJECT[j].W += UPDATE_LIST[k].X_OFFSET;
+						/*OBJECT[j].W += UPDATE_LIST[k].X_OFFSET;*/
 						OBJECT[j].Y += UPDATE_LIST[k].Y_OFFSET;
-						OBJECT[j].H += UPDATE_LIST[k].Y_OFFSET;
+						/*OBJECT[j].H += UPDATE_LIST[k].Y_OFFSET;*/
 					}
 				}
 
 				DRAW_OBJECT(OBJECT[j]);
-			}*/
+			}
 		}
 	}
 
@@ -356,10 +406,82 @@ void LAYER_THREAD() {
 			Temp_Buffer[((Y_MOUSE + j) * 320) + (X_MOUSE + i)] = 0x7F;
 }
 
-void LAYER_CHECK_COLLISION() {
+char LAYER_CHECK_COLLISION(uint_8 ID, enum DIRECTION HIT_LINE) {
+	uint_16 A = 0, B = 0, X = 0, Y = 0;
+	int i = 0;
+	
+	for (; i < 0x40; i++) {
+		if (!(ENTITY_LIST[i].FLAGS & OBJECT_FLAG_PRESENT) || ENTITY_LIST[i].ID != ID)
+			continue;
 
+		switch (HIT_LINE) {
+			case DIRECTION_TOP:
+				if (ENTITY_LIST[i].Y == 0)
+					return 1;
+
+				A = ENTITY_LIST[i].X / 10;
+				B = (ENTITY_LIST[i].X + ENTITY_LIST[i].W - 1) / 10;
+				Y = (ENTITY_LIST[i].Y - 1) / 10;
+
+				if (TILE_BLOCK_ARRAY[(Y * 32) + A] != 0 || TILE_BLOCK_ARRAY[(Y * 32) + B] != 0)
+					return 1;
+
+				if (TILE_BLOCK_ARRAY[(Y * 32) + A + 1] != 0)
+					return 1;
+
+				break;
+			case DIRECTION_BOTTOM:
+				if (ENTITY_LIST[i].Y + ENTITY_LIST[i].H == 200)
+					return 1;
+
+				A = ENTITY_LIST[i].X / 10;
+				B = (ENTITY_LIST[i].X + ENTITY_LIST[i].W - 1) / 10;
+				Y = (ENTITY_LIST[i].Y + ENTITY_LIST[i].H) / 10;
+
+				if (TILE_BLOCK_ARRAY[(Y * 32) + A] != 0 || TILE_BLOCK_ARRAY[(Y * 32) + B] != 0)
+					return 1;
+
+				if (TILE_BLOCK_ARRAY[(Y * 32) + A + 1] != 0)
+					return 1;
+
+				break;
+			case DIRECTION_LEFT:
+				if (ENTITY_LIST[i].X == 0)
+					return 1;
+
+				A = ENTITY_LIST[i].Y / 10;
+				B = (ENTITY_LIST[i].Y + ENTITY_LIST[i].H - 1) / 10;
+				X = (ENTITY_LIST[i].X - 1) / 10;
+
+				if (TILE_BLOCK_ARRAY[(A * 32) + X] != 0 || TILE_BLOCK_ARRAY[(B * 32) + X] != 0)
+					return 1;
+
+				if (TILE_BLOCK_ARRAY[((A + 1) * 32) + X] != 0)
+					return 1;
+
+				break;
+			case DIRECTION_RIGHT:
+				if (ENTITY_LIST[i].X + ENTITY_LIST[i].W == 320)
+					return 1;
+
+				A = ENTITY_LIST[i].Y / 10;
+				B = (ENTITY_LIST[i].Y + ENTITY_LIST[i].H - 1) / 10;
+				X = (ENTITY_LIST[i].X + ENTITY_LIST[i].W) / 10;
+
+				if (TILE_BLOCK_ARRAY[(A * 32) + X] != 0 || TILE_BLOCK_ARRAY[(B * 32) + X] != 0)
+					return 1;
+				
+				if (TILE_BLOCK_ARRAY[((A + 1) * 32) + X] != 0)
+					return 1;
+
+				break;
+		}
+	}
+
+	return 0;
 }
 
+/* Work on after these tasks: advanced allocation->file management->bmp handling->fonts->text elements */
 void LAYER_CHECK_CLICK() {
 	
 }
@@ -376,6 +498,7 @@ void CREATE_OBJECT(OBJECT_PROPERTY OBJECT, uint_8 LAYER, uint_16 LENGTH) {
 			continue;
 
 		LIST[i] = OBJECT;
+		break;
 	}
 }
 
@@ -481,8 +604,7 @@ void KEYBOARD_THREAD() {
 		for (j = 0; j < 0x10; j++) {
 			if (KEYBINDS[i].KEY == CURRENT_KEYS[j]) {
 				EVENT = (void (*)(void))KEYBINDS[i].FUNCTION;
-				/*RUN_NEXT_TICK((void *)EVENT);*/
-				EVENT();
+				RUN_NEXT_TICK((void *)EVENT);
 			}
 		}
 	}
