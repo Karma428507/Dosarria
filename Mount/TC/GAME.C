@@ -1,9 +1,9 @@
 #include <DOS.H>
-#include <STDIO.H>
 
 /* CONSTANTS */
 #define VIDEO 				0xA0000000
 #define TEMP  				0xB0000000
+#define TEXT  				0xB8000000
 #define SCREEN				0xFA00 / 0x02
 #define NULL				0
 
@@ -84,9 +84,11 @@ typedef struct {
 } THREAD_PROPERTY;
 
 /* VGA */
-void VGA_INIT();
-void VGA_EXIT();
+void VGA_MODE(uint_8);
 void VGA_SWAP();
+void VGA_LOAD_TERMINAL();
+void VGA_PLACE_CHARACTER(uint_8);
+void VGA_PRINT(const char *);
 void VGA_PLACE(uint_8, uint_16, uint_16);
 
 /* DRAWING */
@@ -104,6 +106,8 @@ void SEND_OBJECT_UPDATE(uint_8, char, char);
 /* INPUT */
 void interrupt ISR_KEYBOARD(void);
 void interrupt ISR_MOUSE(void);
+uint_8 GET_CHARACTER();
+void INIT_MOUSE();
 void REGISTER_KEY_INPUT(uint_8, void *);
 void KEYBOARD_THREAD();
 
@@ -123,6 +127,7 @@ void RUN_NEXT_TICK(void *);
 /* FILE MANAGEMENT */
 
 /* WORLD GEN */
+void WORLD_GENERATE_SIMPLE();
 
 /* ARRAYS */
 LAYER_PROPERTIES LAYERS[2];
@@ -141,9 +146,10 @@ THREAD_PROPERTY THREAD_LIST[0x40];
 void interrupt (*ISR_KEYBOARD_OLD)(void);
 void interrupt (*ISR_MOUSE_OLD)(void);
 void interrupt (*ISR_TIMER_OLD)(void);
-int COLOR_PICKED = BLOCK_TYPE_GRASS;
+
+uint_8 EXIT = 0, JUMPING = 0, PLAYER_COLOR = COLOR_PICKER(7, 0, 0);
+int COLOR_PICKED = BLOCK_TYPE_GRASS, VGA_OFFSET = 0;
 int X_MOUSE = 0, Y_MOUSE = 0;
-char EXIT = 0, JUMPING = 0;
 
 /* ALL FUNCTIONS */
 void Block_Change_1() {
@@ -197,8 +203,6 @@ void Player_Fall() {
 	if (JUMPING & 1)
 		return;
 
-	
-
 	if (!LAYER_CHECK_COLLISION(OBJECT_ID_PLAYER, DIRECTION_BOTTOM))
 		SEND_OBJECT_UPDATE(OBJECT_ID_PLAYER, 0, 1);
 	else
@@ -210,14 +214,42 @@ void Exit_Loop() {
 }
 
 int main() {
-	OBJECT_PROPERTY Plr = {OBJECT_ID_PLAYER, OBJECT_FLAG_PRESENT, COLOR_PICKER(1, 1, 3), 20, 30, 40, 40};
+	OBJECT_PROPERTY Plr = {OBJECT_ID_PLAYER, OBJECT_FLAG_PRESENT, 0, 20, 30, 40, 40};
+	/*uint_8 Color_Player = 0;*/
 	void (* THREAD)(void);
-	union REGS inp, outp;
 	int i = 0;
 
-	inp.x.ax = 0x00;
-	int86(0x33, &inp, &outp);
+	VGA_LOAD_TERMINAL();
+	VGA_PRINT("==========\n$");
+	VGA_PRINT("|DOSARRIA|\n$");
+	VGA_PRINT("==========\n\n$");
 
+	VGA_PRINT("FINDING MOUSE DRIVER...\n$");
+	INIT_MOUSE();
+	VGA_PRINT("MOUSE INITALIZED\n\n$");
+
+	/*VGA_PRINT("ENTER PLAYER COLOR (R, G, B)$");
+	PLAYER_COLOR:
+		VGA_PRINT("\n> $");
+		Color_Player = GET_CHARACTER();
+		VGA_PLACE_CHARACTER(Color_Player);
+		switch(Color_Player) {
+			case 'R':
+				Plr.COLOR = COLOR_PICKER(7, 0, 0);
+				break;
+			case 'g':
+				Plr.COLOR = COLOR_PICKER(0, 7, 0);
+				break;
+			case 'b':
+				Plr.COLOR = COLOR_PICKER(0, 0, 3);
+				break;
+			default:
+				goto PLAYER_COLOR;
+		}*/
+
+	Plr.COLOR = COLOR_PICKER(7, 0, 0);
+
+	VGA_PRINT("\n\nLOADING INTERRUPTS...\n$");
 	ISR_KEYBOARD_OLD = getvect(0x09);
 	ISR_MOUSE_OLD = getvect(0x74);
 	ISR_TIMER_OLD = getvect(0x1C);
@@ -235,17 +267,10 @@ int main() {
 	REGISTER_KEY_INPUT(' ', (void *)&Player_Jump);
 	REGISTER_KEY_INPUT(0x2B, (void *)&Exit_Loop);
 
-	VGA_INIT();
-	INIT_LAYERS();	
-
-	/* Remove when world gen is automated (with seeds) */
-	for (i = 0; i < 32; i++) {
-		TILE_BLOCK_ARRAY[(32 * 10) + i] = BLOCK_TYPE_GRASS;
-	}
-
-	for (i = 0; i < 288; i++) {
-		TILE_BLOCK_ARRAY[(32 * 11) + i] = BLOCK_TYPE_DIRT;
-	}
+	VGA_PRINT("\n\nLOADING GRAPHICS...\n$");
+	VGA_MODE(0x13);
+	INIT_LAYERS();
+	WORLD_GENERATE_SIMPLE();
 
 	/* Load Objects */
 	CREATE_OBJECT(Plr, 0x01, 0x40);
@@ -275,27 +300,32 @@ int main() {
 	setvect(0x09, ISR_KEYBOARD_OLD);
     setvect(0x74, ISR_MOUSE_OLD);
 	setvect(0x1C, ISR_TIMER_OLD);
-	VGA_EXIT();
+	VGA_MODE(0x03);
 	return 0;
 }
 
-void VGA_INIT() {
+void LEAVE_FAIL() {
+	short far *Text_Buffer = (short far *)TEXT;
 	union REGS inp, outp;
+	int i = 0;
 
-	inp.h.ah = 0x00;
-	inp.h.al = 0x13;
-	int86(0x10, &inp, &outp);
+	VGA_MODE(0x03);
+
+	for (; i < 2000; i++) {
+		Text_Buffer[i] = 0x0700;
+	}
+
+	inp.h.ah = 0x4C;
+	inp.h.al = 0x01;
+	int86(0x21, &inp, &outp);
 }
 
-void VGA_EXIT() {
+void VGA_MODE(uint_8 MODE) {
 	union REGS inp, outp;
 
-	/* Find a way to load the previous screen mode without assuming 3 */
 	inp.h.ah = 0x00;
-	inp.h.al = 0x03;
+	inp.h.al = MODE;
 	int86(0x10, &inp, &outp);
-
-	/* Clear console */
 }
 
 void VGA_SWAP() {
@@ -306,6 +336,38 @@ void VGA_SWAP() {
 	for (; i < SCREEN; i++) {
 		Video_Buffer[i] = Temp_Buffer[i];
 		Temp_Buffer[i] = 0x03030303;
+	}
+}
+
+void VGA_LOAD_TERMINAL() {
+	short far *Text_Buffer = (short far *)TEXT;
+	int i = 0;
+
+	VGA_MODE(0x03);
+
+	for (; i < 2000; i++) {
+		Text_Buffer[i] = 0x0200;
+	}
+}
+
+void VGA_PLACE_CHARACTER(uint_8 CHARACTER) {
+	short far *Text_Buffer = (short far *)TEXT;
+	Text_Buffer += VGA_OFFSET;
+	VGA_OFFSET++;
+
+	*Text_Buffer |= CHARACTER;
+}
+
+void VGA_PRINT(const char *MESSAGE) {
+	int i = 0;
+
+	for (; MESSAGE[i] != '$'; i++) {
+		if (MESSAGE[i] == '\n') {
+			VGA_OFFSET = ((VGA_OFFSET / 80) + 1) * 80; 
+			continue;
+		}
+
+		VGA_PLACE_CHARACTER(MESSAGE[i]);
 	}
 }
 
@@ -568,6 +630,7 @@ void interrupt ISR_KEYBOARD(void) {
 
 void interrupt ISR_MOUSE(void) {
 	union REGS inp, outp;
+	int i = 0, X, Y;
 
 	inp.x.ax = 0x03;
 	int86(0x33, &inp, &outp);
@@ -575,8 +638,24 @@ void interrupt ISR_MOUSE(void) {
 
 	if (outp.x.bx & 1) {
 		/*LMB*/
-		TILE_BLOCK_ARRAY[((Y_MOUSE / 10) * 32) + (X_MOUSE / 10)] = COLOR_PICKED;
+
+		X = X_MOUSE / 10;
+		Y = Y_MOUSE / 10;
+
+		/* Fix later but this is good for now */
+		for (; i < 0x40; i++) {
+			if (!(ENTITY_LIST[i].FLAGS & OBJECT_FLAG_PRESENT))
+				continue;
+
+			if (ENTITY_LIST[i].X <= X_MOUSE && X_MOUSE <= ENTITY_LIST[i].X + ENTITY_LIST[i].W &&
+				ENTITY_LIST[i].Y <= Y_MOUSE && Y_MOUSE <= ENTITY_LIST[i].Y + ENTITY_LIST[i].H)
+				goto Failed;
+		}
+
+		TILE_BLOCK_ARRAY[(Y * 32) + X] = COLOR_PICKED;
 	}
+
+	Failed:
 
 	if (outp.x.bx & 2) {
 		/*RMB*/
@@ -594,6 +673,27 @@ void interrupt ISR_MOUSE(void) {
 	Y_MOUSE = outp.x.dx;
 
 	ISR_MOUSE_OLD();
+}
+
+uint_8 GET_CHARACTER() {
+	union REGS inp, outp;
+
+	inp.x.ax = 0x00;
+	int86(0x16, &inp, &outp);
+	return inp.h.ah;
+}
+
+void INIT_MOUSE() {
+	union REGS inp, outp;
+
+	inp.x.ax = 0x00;
+	int86(0x33, &inp, &outp);
+
+	if (outp.x.ax != 0xFFFF) {
+		VGA_PRINT("ERROR, MOUSE DRIVER NOT FOUND\nPRESS ANY KEY TO EXIT\n$");
+		GET_CHARACTER();
+		LEAVE_FAIL();
+	}
 }
 
 void KEYBOARD_THREAD() {
@@ -731,6 +831,17 @@ void RUN_NEXT_TICK(void *FUNCTION) {
 	ADD_THREAD_ENTRY(Thread);
 }
 
+void WORLD_GENERATE_SIMPLE() {
+	int i = 0;
 
+	/* Remove when world gen is automated (with seeds) */
+	for (i = 0; i < 32; i++) {
+		TILE_BLOCK_ARRAY[(32 * 10) + i] = BLOCK_TYPE_GRASS;
+	}
+
+	for (i = 0; i < 288; i++) {
+		TILE_BLOCK_ARRAY[(32 * 11) + i] = BLOCK_TYPE_DIRT;
+	}
+}
 
 
